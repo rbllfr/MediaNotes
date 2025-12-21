@@ -1,0 +1,31 @@
+{
+  "configurations" : [
+    {
+      "id" : "DFE0D74D-7447-462B-83FE-0ED493924D3F",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "environmentVariableEntries" : [
+      {
+        "key" : "SNAPSHOT_ARTIFACTS",
+        "value" : "$(SOURCE_ROOT)\/MediaNotesTests\/Snapshots\/__Snapshots__"
+      }
+    ],
+    "performanceAntipatternCheckerEnabled" : true
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:MediaNotes.xcodeproj",
+        "identifier" : "B2C3D4E50051000000000001",
+        "name" : "MediaNotesTests"
+      }
+    }
+  ],
+  "version" : 1
+}

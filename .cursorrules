@@ -1,0 +1,547 @@
+# MediaNotes - Cursor Rules
+
+This document defines the architectural patterns, code styles, and conventions for the MediaNotes codebase.
+
+## 🏗️ Architecture Overview
+
+### MVVM Pattern
+- **Strict MVVM separation**: ViewModels contain all presentation logic, Views are thin and only handle UI
+- ViewModels are `@Observable` and marked `@MainActor`
+- Views inject ViewModels via initializers (never create ViewModels internally)
+- Use protocol-oriented design: every ViewModel has a protocol for testability
+
+### Dependency Injection
+- **DependencyContainer** is the single source of truth for creating views and services
+- Use `DependencyProvider.shared.dependencies` to access container at runtime
+- All dependencies are injected through initializers
+- Never use singletons except for DependencyProvider
+- View factories in DependencyContainer return fully configured views
+
+### Repository Pattern
+- View models access data through Repository protocols
+- Repositories are protocol-first: `{Feature}RepositoryProtocol`
+- SwiftData implementations: `SwiftData{Feature}Repository`
+- Repositories are marked `@MainActor` and `Sendable`
+- Share a single ModelContext across repositories
+
+## 📁 File Organization
+
+```
+MediaNotes/
+├── Models/              # SwiftData @Model classes with business logic
+├── ViewModels/          # Presentation logic, @Observable classes
+├── Views/               # SwiftUI views (thin, UI only)
+├── Services/            # DI container, repositories, utilities
+│   └── Repositories/    # Data access layer
+└── Assets.xcassets/     # Images, colors, icons
+
+MediaNotesTests/
+├── ViewModels/          # ViewModel unit tests
+├── Mocks/               # Mock implementations of protocols
+└── Snapshots/           # Snapshot/visual regression tests
+```
+
+## 🎨 Naming Conventions
+
+### Files & Classes
+- **Views**: `{Feature}View.swift` (e.g., `LibraryView.swift`)
+- **ViewModels**: `{Feature}ViewModel.swift` with `{Feature}ViewModelProtocol`
+- **Repositories**: `{Feature}Repository.swift` with implementations like `SwiftData{Feature}Repository`
+- **Models**: Singular noun (e.g., `MediaItem.swift`, `Note.swift`)
+- **Mocks**: `Mock{Feature}.swift` (e.g., `MockLibraryViewModel.swift`)
+- **Tests**: `{Feature}Tests.swift` (e.g., `LibraryViewModelTests.swift`)
+
+### Methods & Properties
+- Use descriptive, action-oriented names for methods
+- Async methods use `async throws` pattern
+- Boolean properties start with `is`, `has`, `can`, `should`
+- Computed properties for derived state (avoid caching unless necessary)
+
+### Test Methods
+- Format: `test_{method}_{scenario}` (e.g., `test_initialize_loadsItems`)
+- Use descriptive names that explain what is being tested
+
+## 🔧 Code Style
+
+### MARK Comments
+Use MARK comments to organize code sections in this order:
+```swift
+// MARK: - Protocol (if defining one)
+// MARK: - Dependencies
+// MARK: - State / Properties
+// MARK: - Computed Properties
+// MARK: - Initialization
+// MARK: - Actions / Public Methods
+// MARK: - Private Helpers
+```
+
+### SwiftData Models
+```swift
+@Model
+final class MyModel: Sendable, Equatable {
+    static func == (lhs: MyModel, rhs: MyModel) -> Bool {
+        lhs.id == rhs.id
+    }
+    
+    var id: UUID
+    var createdAt: Date
+    var updatedAt: Date
+    
+    // Relationships with explicit delete rules
+    @Relationship(deleteRule: .cascade, inverse: \OtherModel.myModel)
+    var relatedItems: [OtherModel]?
+    
+    init(...) {
+        self.id = UUID()
+        self.createdAt = Date()
+        self.updatedAt = Date()
+        // Initialize relationships to empty arrays
+        self.relatedItems = []
+    }
+}
+```
+
+### ViewModels
+```swift
+// MARK: - Protocol
+
+@MainActor
+protocol MyViewModelProtocol: AnyObject, Observable {
+    var viewState: ViewState<DataType> { get }
+    func initialize() async
+    func refresh() async
+}
+
+// MARK: - Implementation
+
+@MainActor
+@Observable
+final class MyViewModel: MyViewModelProtocol {
+    
+    // MARK: - Dependencies
+    
+    private let repository: any MyRepositoryProtocol
+    
+    // MARK: - State
+    
+    private(set) var viewState: ViewState<DataType> = .empty
+    var someProperty: String = ""
+    
+    // MARK: - Computed Properties
+    
+    var derivedValue: String {
+        // Compute from state
+    }
+    
+    // MARK: - Initialization
+    
+    init(repository: any MyRepositoryProtocol) {
+        self.repository = repository
+    }
+    
+    // MARK: - Actions
+    
+    func initialize() async {
+        guard viewState.isEmpty else { return }
+        await loadData()
+    }
+    
+    func refresh() async {
+        await loadData()
+    }
+    
+    // MARK: - Private Helpers
+    
+    private func loadData() async {
+        viewState = .loading
+        do {
+            let data = try await repository.fetchData()
+            viewState = .ready(data)
+        } catch {
+            viewState = .error(error.localizedDescription)
+        }
+    }
+}
+```
+
+### Views
+```swift
+struct MyView: View {
+    let viewModel: any MyViewModelProtocol
+    @Binding var someBinding: Bool
+    
+    init(viewModel: any MyViewModelProtocol, someBinding: Binding<Bool>) {
+        self.viewModel = viewModel
+        self._someBinding = someBinding
+    }
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.background.ignoresSafeArea()
+                
+                switch viewModel.viewState {
+                case .empty, .loading:
+                    ProgressView().tint(Theme.accent)
+                case .ready:
+                    contentView
+                case .error(let message):
+                    errorView(message: message)
+                }
+            }
+            .navigationTitle("Title")
+        }
+        .task {
+            await viewModel.initialize()
+        }
+    }
+    
+    // MARK: - Content View
+    
+    @ViewBuilder
+    private var contentView: some View {
+        ScrollView {
+            // Content
+        }
+    }
+    
+    // MARK: - Error View
+    
+    private func errorView(message: String) -> some View {
+        VStack {
+            // Error UI
+        }
+    }
+}
+```
+
+### Repositories
+```swift
+// MARK: - Protocol
+
+protocol MyRepositoryProtocol: Sendable {
+    func fetchAll() async throws -> [MyModel]
+    func create(_ item: MyModel) async throws
+    func update(_ item: MyModel) async throws
+    func delete(_ item: MyModel) async throws
+}
+
+// MARK: - SwiftData Implementation
+
+@MainActor
+final class SwiftDataMyRepository: MyRepositoryProtocol {
+    
+    private let modelContext: ModelContext
+    
+    init(modelContext: ModelContext) {
+        self.modelContext = modelContext
+    }
+    
+    func fetchAll() async throws -> [MyModel] {
+        let descriptor = FetchDescriptor<MyModel>(
+            sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+        )
+        return try modelContext.fetch(descriptor)
+    }
+    
+    func create(_ item: MyModel) async throws {
+        modelContext.insert(item)
+        try modelContext.save()
+    }
+}
+```
+
+## 🎨 UI & Theme
+
+### Theme System
+- **Always use Theme constants** for colors, spacing, typography
+- Never hardcode colors, sizes, or spacing values
+- Use semantic color names (e.g., `Theme.textPrimary` not `Color.black`)
+
+### Colors
+```swift
+// Backgrounds
+Theme.background, Theme.cardBackground, Theme.secondaryBackground
+
+// Text
+Theme.textPrimary, Theme.textSecondary, Theme.textTertiary
+
+// Accents
+Theme.accent, Theme.error
+
+// Media-specific
+Theme.color(for: mediaKind)
+```
+
+### Spacing
+```swift
+Theme.spacingXS  // 4pt
+Theme.spacingSM  // 8pt
+Theme.spacingMD  // 16pt
+Theme.spacingLG  // 24pt
+Theme.spacingXL  // 32pt
+```
+
+### Typography
+```swift
+Theme.displayFont(size:)  // Large titles, serif, bold
+Theme.headingFont(size:)  // Section headers, rounded, semibold
+Theme.bodyFont(size:)     // Body text, default, regular
+Theme.monoFont(size:)     // Metadata, monospaced, medium
+```
+
+### Button Styles
+```swift
+.buttonStyle(PrimaryButtonStyle())    // Primary actions
+.buttonStyle(SecondaryButtonStyle())  // Secondary actions
+.buttonStyle(GhostButtonStyle())      // Tertiary/subtle actions
+```
+
+### View Modifiers
+```swift
+.themedCard()       // Card-style container
+.themedRow()        // List row styling
+.themedBackground() // Standard background
+```
+
+## 📊 State Management
+
+### ViewState Enum
+Use `ViewState<T>` for data loading states:
+```swift
+enum ViewState<T>: Equatable where T: Equatable {
+    case empty      // Initial state
+    case loading    // Fetching data
+    case ready(T)   // Data loaded successfully
+    case error(String) // Error occurred
+}
+```
+
+### FormState Enum
+Use `FormState` for form/save operations:
+```swift
+enum FormState: Equatable {
+    case idle       // Ready for input
+    case saving     // Saving data
+    case saved      // Save successful
+    case error(String) // Save failed
+}
+```
+
+### State Patterns
+- ViewModels own state, Views observe
+- Use `private(set)` for state that Views read but don't modify
+- Use computed properties for derived state
+- Mark state changes with `@Observable` (not `@Published`)
+
+## ✅ Testing Guidelines
+
+### Unit Tests (ViewModels)
+```swift
+@MainActor
+final class MyViewModelTests: XCTestCase {
+    
+    var sut: MyViewModel!
+    var mockRepository: MockMyRepository!
+    
+    override func setUp() async throws {
+        mockRepository = MockMyRepository()
+        sut = MyViewModel(repository: mockRepository)
+    }
+    
+    override func tearDown() async throws {
+        sut = nil
+        mockRepository = nil
+    }
+    
+    func test_initialize_loadsData() async {
+        // Given
+        let expectedData = MyModel(...)
+        await mockRepository.addTestItem(expectedData)
+        
+        // When
+        await sut.initialize()
+        
+        // Then
+        XCTAssertTrue(sut.viewState.isReady)
+        XCTAssertEqual(sut.viewState.data?.count, 1)
+    }
+}
+```
+
+### Mock Objects
+- Implement same protocol as production code
+- Provide convenience initializers for different states
+- Use `@MainActor` and `@Observable` for ViewModels
+- Track method calls for verification
+
+```swift
+@MainActor
+@Observable
+final class MockMyViewModel: MyViewModelProtocol {
+    var viewState: ViewState<[MyModel]>
+    
+    init(viewState: ViewState<[MyModel]> = .empty) {
+        self.viewState = viewState
+    }
+    
+    static func ready(with items: [MyModel]) -> MockMyViewModel {
+        MockMyViewModel(viewState: .ready(items))
+    }
+    
+    static func loading() -> MockMyViewModel {
+        MockMyViewModel(viewState: .loading)
+    }
+    
+    static func error(_ message: String) -> MockMyViewModel {
+        MockMyViewModel(viewState: .error(message))
+    }
+    
+    func initialize() async {
+        // No-op for mock - state is pre-set
+    }
+}
+```
+
+### Snapshot Tests
+- Use SnapshotTesting library
+- Test multiple device sizes and color schemes
+- Use `SampleDataFactory` for consistent test data
+- Store snapshots in `__Snapshots__/{TestName}/` directories
+
+## 🔄 Async/Await Patterns
+
+### Always use async/await (never completion handlers)
+```swift
+// ✅ Good
+func fetchData() async throws -> [Item] { ... }
+
+// ❌ Bad
+func fetchData(completion: @escaping (Result<[Item], Error>) -> Void) { ... }
+```
+
+### ViewModel async methods
+```swift
+func performAction() async {
+    formState = .saving
+    do {
+        try await repository.save(item)
+        formState = .saved
+    } catch {
+        formState = .error(error.localizedDescription)
+    }
+}
+```
+
+### View task modifier
+```swift
+.task {
+    await viewModel.initialize()
+}
+
+.refreshable {
+    await viewModel.refresh()
+}
+```
+
+## 📝 Documentation
+
+### Use doc comments for public APIs
+```swift
+/// Brief one-line description
+///
+/// Longer explanation if needed, including:
+/// - Important details
+/// - Edge cases
+/// - Examples
+///
+/// - Parameter name: Description
+/// - Returns: Description
+/// - Throws: Description of errors
+func myFunction(name: String) async throws -> Result { ... }
+```
+
+### Inline comments for complex logic
+- Use `//` for single-line comments
+- Explain *why*, not *what* (code shows what)
+- Add comments for non-obvious business logic
+
+## 🚫 Don't Do This
+
+### Avoid These Patterns
+- ❌ Don't create ViewModels inside Views
+- ❌ Don't use `@StateObject` or `@ObservedObject` (use `@Observable` instead)
+- ❌ Don't bypass repositories to access ModelContext directly in ViewModels
+- ❌ Don't use global mutable state (except DependencyProvider)
+- ❌ Don't hardcode colors, spacing, or fonts
+- ❌ Don't create new files without corresponding tests
+- ❌ Don't use force unwrapping (except in tests or truly impossible cases)
+- ❌ Don't ignore SwiftData relationships (always specify delete rules)
+- ❌ Don't forget to update `updatedAt` timestamps when modifying models
+
+## ✨ Best Practices
+
+### General
+1. **Prefer immutability**: Use `let` over `var` whenever possible
+2. **Type inference**: Use explicit types when clarity is needed
+3. **Guard early**: Use `guard` for preconditions at the start of functions
+4. **Extension organization**: Group related functionality in extensions with MARK comments
+5. **Errors**: Use specific error types with localized descriptions
+
+### SwiftData
+1. Always use `FetchDescriptor` with explicit predicates
+2. Use `#Predicate` macro for type-safe queries
+3. Specify `@Relationship` delete rules explicitly
+4. Initialize relationship arrays to `[]` in init
+5. Update `updatedAt` timestamp when modifying models
+6. Use `.localizedStandardCompare()` for sorting user-visible strings
+
+### SwiftUI
+1. Extract complex views into separate `@ViewBuilder` properties
+2. Use `@Binding` for two-way communication
+3. Prefer composition over inheritance
+4. Keep `body` property simple and readable
+5. Use `private` for helper views
+6. Always provide preview implementations
+
+### Performance
+1. Use `LazyVStack`/`LazyHStack` for long lists
+2. Mark views as `private` when possible to help compiler optimization
+3. Avoid expensive operations in computed properties
+4. Use `@MainActor` to ensure UI updates on main thread
+
+## 🎯 Code Review Checklist
+
+Before submitting code, verify:
+- [ ] ViewModels have corresponding protocols
+- [ ] Views inject ViewModels via initializers
+- [ ] All new features have unit tests
+- [ ] UI uses Theme constants (no hardcoded values)
+- [ ] MARK comments organize code sections
+- [ ] Documentation for public APIs
+- [ ] Async/await used correctly
+- [ ] SwiftData relationships have delete rules
+- [ ] Mock objects created for new protocols
+- [ ] Error cases handled gracefully
+- [ ] No force unwrapping (except in tests)
+- [ ] Timestamps updated when models change
+
+---
+
+## 📚 Key Files Reference
+
+- `DependencyContainer.swift` - Dependency injection setup
+- `DependencyContaining.swift` - DI protocol definition
+- `Theme.swift` - UI constants and styles
+- `ViewState.swift` - Data loading state enum
+- `FormState.swift` - Form submission state enum
+- `SnapshotTestHelpers.swift` - Snapshot testing utilities
+
+---
+
+**Remember**: These patterns exist to make the codebase:
+- **Testable**: Protocol-oriented design enables mocking
+- **Maintainable**: Clear separation of concerns
+- **Consistent**: Uniform patterns across all features
+- **Scalable**: Easy to add new features following existing patterns
+

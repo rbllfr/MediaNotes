@@ -1,0 +1,38 @@
+{
+  "configurations" : [
+    {
+      "id" : "57199344-49E6-4B8A-B037-65D6C039C481",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "performanceAntipatternCheckerEnabled" : true,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:MediaNotes.xcodeproj",
+      "identifier" : "A1B2C3D40051000000000001",
+      "name" : "MediaNotes"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:MediaNotes.xcodeproj",
+        "identifier" : "D4E5F6070051000000000001",
+        "name" : "MediaNotesSnapshotTests"
+      }
+    },
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:MediaNotes.xcodeproj",
+        "identifier" : "B2C3D4E50051000000000001",
+        "name" : "MediaNotesTests"
+      }
+    }
+  ],
+  "version" : 1
+}
